@@ -19,10 +19,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_host.h"
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "temperature.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,7 +47,8 @@ I2S_HandleTypeDef hi2s3;
 SPI_HandleTypeDef hspi1;
 
 /* USER CODE BEGIN PV */
-
+float sicaklik_degeri = 0.0f;
+float nem_degeri = 0.0f;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -102,7 +102,7 @@ int main(void)
   MX_SPI1_Init();
   MX_USB_HOST_Init();
   /* USER CODE BEGIN 2 */
-
+  SHT31_Init(&hi2c1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -113,6 +113,10 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
+    SHT31_GetValues(&sicaklik_degeri, &nem_degeri);
+    HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_12); // Yeşil LED
+    LOG()
+    HAL_Delay(500);
   }
   /* USER CODE END 3 */
 }
@@ -367,7 +371,12 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void LOG(char *message) {
+    HAL_UART_Transmit(&huart1, (uint8_t*)message, strlen(message), 100);
+    // Add a newline
+    uint8_t newline[2] = {'\r', '\n'};
+    HAL_UART_Transmit(&huart1, newline, 2, 100);
+}
 /* USER CODE END 4 */
 
 /**
