@@ -17,11 +17,11 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
+#include "shtsensor.h"
 #include "main.h"
 #include "usb_host.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "temperature.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
