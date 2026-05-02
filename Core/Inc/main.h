@@ -117,10 +117,30 @@ void Error_Handler(void);
 #define OTG_FS_OverCurrent_GPIO_Port GPIOD
 #define SWO_Pin GPIO_PIN_3
 #define SWO_GPIO_Port GPIOB
+#define Audio_SCL_Pin GPIO_PIN_6
+#define Audio_SCL_GPIO_Port GPIOB
+#define Audio_SDA_Pin GPIO_PIN_9
+#define Audio_SDA_GPIO_Port GPIOB
 #define MEMS_INT2_Pin GPIO_PIN_1
 #define MEMS_INT2_GPIO_Port GPIOE
 
 /* USER CODE BEGIN Private defines */
+#define KEYPAD_R1_Pin GPIO_PIN_7
+#define KEYPAD_R1_GPIO_Port GPIOE
+#define KEYPAD_R2_Pin GPIO_PIN_8
+#define KEYPAD_R2_GPIO_Port GPIOE
+#define KEYPAD_R3_Pin GPIO_PIN_9
+#define KEYPAD_R3_GPIO_Port GPIOE
+#define KEYPAD_R4_Pin GPIO_PIN_10
+#define KEYPAD_R4_GPIO_Port GPIOE
+#define KEYPAD_C1_Pin GPIO_PIN_11
+#define KEYPAD_C1_GPIO_Port GPIOE
+#define KEYPAD_C2_Pin GPIO_PIN_12
+#define KEYPAD_C2_GPIO_Port GPIOE
+#define KEYPAD_C3_Pin GPIO_PIN_13
+#define KEYPAD_C3_GPIO_Port GPIOE
+#define KEYPAD_C4_Pin GPIO_PIN_14
+#define KEYPAD_C4_GPIO_Port GPIOE
 
 /* USER CODE END Private defines */
 

@@ -19,9 +19,11 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_host.h"
-#include "dhtsensor.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "cabinet_ui.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,8 +49,7 @@ I2S_HandleTypeDef hi2s3;
 SPI_HandleTypeDef hspi1;
 
 /* USER CODE BEGIN PV */
-float sicaklik_degeri = 0.0f;
-float nem_degeri = 0.0f;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -102,7 +103,8 @@ int main(void)
   MX_SPI1_Init();
   MX_USB_HOST_Init();
   /* USER CODE BEGIN 2 */
-  DHT22_Init(GPIOD, GPIO_PIN_0);
+  CabinetUI_Init(&hi2c1);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -110,11 +112,10 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	if (DHT22_GetValues(*sicaklik_degeri, *nem_degeri) == DHT22_OK)
-	{
-		LOG("Veriler cekildi.");
-	}
+    MX_USB_HOST_Process();
+
     /* USER CODE BEGIN 3 */
+    CabinetUI_Process();
   }
   /* USER CODE END 3 */
 }
@@ -364,17 +365,24 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+  HAL_GPIO_WritePin(GPIOE, KEYPAD_R1_Pin|KEYPAD_R2_Pin|KEYPAD_R3_Pin|KEYPAD_R4_Pin, GPIO_PIN_SET);
+
+  GPIO_InitStruct.Pin = KEYPAD_R1_Pin|KEYPAD_R2_Pin|KEYPAD_R3_Pin|KEYPAD_R4_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = KEYPAD_C1_Pin|KEYPAD_C2_Pin|KEYPAD_C3_Pin|KEYPAD_C4_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-void LOG(char *message) {
-    HAL_UART_Transmit(&huart1, (uint8_t*)message, strlen(message), 100);
-    // Add a newline
-    uint8_t newline[2] = {'\r', '\n'};
-    HAL_UART_Transmit(&huart1, newline, 2, 100);
-}
+
 /* USER CODE END 4 */
 
 /**
