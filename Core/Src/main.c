@@ -24,6 +24,8 @@
 /* USER CODE BEGIN Includes */
 #include "cabinet_ui.h"
 #include "dhtsensor.h"
+#include "humidity.h"
+#include "thermal.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,7 +35,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define DHT_READ_INTERVAL_MS 2000U
+#define CONTROL_INTERVAL_MS  1000U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,6 +54,9 @@ SPI_HandleTypeDef hspi1;
 /* USER CODE BEGIN PV */
 float sicaklik = 0.0f;
 float nem = 0.0f;
+static uint8_t sensor_ok = 0U;
+static uint32_t last_dht_read_tick = 0U;
+static uint32_t last_control_tick = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -106,6 +112,12 @@ int main(void)
   /* USER CODE BEGIN 2 */
   CabinetUI_Init(&hi2c1);
   DHT22_Init(GPIOD, GPIO_PIN_0);
+  Thermal_Init(&k_default_pid);
+  Humidity_Init();
+  Thermal_ApplyOutput(0.0f);
+  Humidity_AllOff();
+  last_dht_read_tick = HAL_GetTick() - DHT_READ_INTERVAL_MS;
+  last_control_tick = HAL_GetTick();
 
   /* USER CODE END 2 */
 
@@ -117,10 +129,50 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
+    uint32_t now = HAL_GetTick();
+    const CabinetUI_SettingsTypeDef *settings = CabinetUI_GetSettings();
+    float calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
+
     CabinetUI_Process();
-    if (DHT22_GetValues(&sicaklik, &nem) == DHT22_OK)
+
+    if ((now - last_dht_read_tick) >= DHT_READ_INTERVAL_MS)
     {
-      CabinetUI_SetCurrentValues(sicaklik, nem);
+      last_dht_read_tick = now;
+
+      if (DHT22_GetValues(&sicaklik, &nem) == DHT22_OK)
+      {
+        sensor_ok = 1U;
+        calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
+        CabinetUI_SetCurrentValues(calibrated_temperature, nem);
+      }
+      else
+      {
+        sensor_ok = 0U;
+      }
+    }
+
+    if ((now - last_control_tick) >= CONTROL_INTERVAL_MS)
+    {
+      float dt_s = (float)(now - last_control_tick) / 1000.0f;
+      last_control_tick = now;
+      settings = CabinetUI_GetSettings();
+      calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
+
+      if ((settings->running != 0U) && (sensor_ok != 0U))
+      {
+        float thermal_output;
+
+        Thermal_SetSetpoint((float)settings->set_temperature_x10 / 10.0f);
+        thermal_output = Thermal_Step(calibrated_temperature, dt_s);
+        Thermal_ApplyOutput(thermal_output);
+        Humidity_Step(nem, (float)settings->set_humidity);
+      }
+      else
+      {
+        Thermal_ApplyOutput(0.0f);
+        Thermal_Reset();
+        Humidity_AllOff();
+      }
     }
   }
   /* USER CODE END 3 */
