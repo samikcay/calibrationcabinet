@@ -6,8 +6,8 @@
 
 #define UI_REFRESH_MS 250U
 #define UI_LCD_ADDRESS LCD_I2C_DEFAULT_ADDRESS
-#define UI_LCD_COLS LCD_I2C_DEFAULT_COLS
-#define UI_LCD_ROWS LCD_I2C_DEFAULT_ROWS
+#define UI_LCD_COLS 20U
+#define UI_LCD_ROWS 4U
 #define UI_NUMERIC_INPUT_MAX 4U
 
 typedef enum
@@ -35,6 +35,18 @@ static uint8_t lcd_ready = 0U;
 static char numeric_input[UI_NUMERIC_INPUT_MAX + 1U] = {0};
 static uint8_t numeric_input_len = 0U;
 static uint8_t numeric_input_prefilled = 0U;
+static int16_t current_temperature_x10 = 0;
+static int16_t current_humidity_x10 = 0;
+
+static int16_t UI_FloatToX10(float value)
+{
+  if (value >= 0.0f)
+  {
+    return (int16_t)((value * 10.0f) + 0.5f);
+  }
+
+  return (int16_t)((value * 10.0f) - 0.5f);
+}
 
 static uint8_t UI_IsDigit(char key)
 {
@@ -92,14 +104,26 @@ static void UI_ResetNumericInput(void)
 
 static void UI_BeginNumericEdit(UI_ScreenTypeDef next_screen)
 {
+  int16_t value_x10;
+
   UI_ResetNumericInput();
   screen = next_screen;
 
   if (next_screen == UI_SCREEN_EDIT_TEMP)
   {
+    value_x10 = settings.set_temperature_x10;
+    if (value_x10 < 0)
+    {
+      value_x10 = 0;
+    }
+    else if (value_x10 > 800)
+    {
+      value_x10 = 800;
+    }
+
     (void)snprintf(numeric_input, sizeof(numeric_input), "%u.%u",
-                   (uint16_t)(settings.set_temperature_x10 / 10),
-                   (uint16_t)(settings.set_temperature_x10 % 10));
+                   (uint16_t)(value_x10 / 10),
+                   (uint16_t)(value_x10 % 10));
   }
   else if (next_screen == UI_SCREEN_EDIT_HUMIDITY)
   {
@@ -244,6 +268,16 @@ static int16_t UI_GetTemperatureInputX10(void)
 static void UI_SetNumericInputFromTempX10(int16_t value_x10)
 {
   UI_ResetNumericInput();
+
+  if (value_x10 < 0)
+  {
+    value_x10 = 0;
+  }
+  else if (value_x10 > 800)
+  {
+    value_x10 = 800;
+  }
+
   (void)snprintf(numeric_input, sizeof(numeric_input), "%u.%u",
                  (uint16_t)(value_x10 / 10),
                  (uint16_t)(value_x10 % 10));
@@ -322,20 +356,62 @@ static void UI_FormatSignedX10(char *buffer, uint32_t buffer_size, int16_t value
   (void)snprintf(buffer, buffer_size, "%c%d.%d", sign, integer, fraction);
 }
 
+static void UI_FormatX10(char *buffer, uint32_t buffer_size, int16_t value_x10)
+{
+  int16_t integer;
+  int16_t fraction;
+
+  if (value_x10 < 0)
+  {
+    value_x10 = (int16_t)-value_x10;
+    integer = (int16_t)(value_x10 / 10);
+    fraction = (int16_t)(value_x10 % 10);
+    (void)snprintf(buffer, buffer_size, "-%d.%d", integer, fraction);
+  }
+  else
+  {
+    integer = (int16_t)(value_x10 / 10);
+    fraction = (int16_t)(value_x10 % 10);
+    (void)snprintf(buffer, buffer_size, "%d.%d", integer, fraction);
+  }
+}
+
+static void UI_ClearRows(uint8_t first_row)
+{
+  uint8_t row;
+
+  for (row = first_row; row < UI_LCD_ROWS; row++)
+  {
+    (void)LCD_I2C_SetCursor(&lcd, 0U, row);
+    (void)LCD_I2C_PrintPadded(&lcd, "", UI_LCD_COLS);
+  }
+}
+
 static void UI_DrawHome(void)
 {
-  char temp[8];
-  char line[17];
+  char current[8];
+  char target[8];
+  char offset[8];
+  char line[32];
 
-  UI_FormatSignedX10(temp, sizeof(temp), settings.set_temperature_x10);
-  (void)snprintf(line, sizeof(line), "T:%sC H:%3u%%", temp, settings.set_humidity);
+  UI_FormatX10(current, sizeof(current), current_temperature_x10);
+  UI_FormatX10(target, sizeof(target), settings.set_temperature_x10);
+  (void)snprintf(line, sizeof(line), "Sicaklik: %s (%s)", current, target);
   (void)LCD_I2C_SetCursor(&lcd, 0U, 0U);
   (void)LCD_I2C_PrintPadded(&lcd, line, UI_LCD_COLS);
 
-  UI_FormatSignedX10(temp, sizeof(temp), settings.calibration_offset_x10);
-  (void)snprintf(line, sizeof(line), "%s Off:%s", settings.running ? "RUN " : "STOP", temp);
+  UI_FormatX10(current, sizeof(current), current_humidity_x10);
+  UI_FormatX10(target, sizeof(target), (int16_t)(settings.set_humidity * 10));
+  (void)snprintf(line, sizeof(line), "Nem: %s (%s)", current, target);
   (void)LCD_I2C_SetCursor(&lcd, 0U, 1U);
   (void)LCD_I2C_PrintPadded(&lcd, line, UI_LCD_COLS);
+
+  UI_FormatSignedX10(offset, sizeof(offset), settings.calibration_offset_x10);
+  (void)snprintf(line, sizeof(line), "Cal Offset:%s", offset);
+  (void)LCD_I2C_SetCursor(&lcd, 0U, 2U);
+  (void)LCD_I2C_PrintPadded(&lcd, line, UI_LCD_COLS);
+
+  UI_ClearRows(3U);
 }
 
 static void UI_DrawMenu(void)
@@ -346,7 +422,7 @@ static void UI_DrawMenu(void)
     "Cal Offset",
     "Start/Stop"
   };
-  char line[17];
+  char line[32];
 
   (void)LCD_I2C_SetCursor(&lcd, 0U, 0U);
   (void)snprintf(line, sizeof(line), ">%s", items[menu_index]);
@@ -355,12 +431,13 @@ static void UI_DrawMenu(void)
   (void)LCD_I2C_SetCursor(&lcd, 0U, 1U);
   (void)snprintf(line, sizeof(line), "A/B Nav # OK");
   (void)LCD_I2C_PrintPadded(&lcd, line, UI_LCD_COLS);
+  UI_ClearRows(2U);
 }
 
 static void UI_DrawEditValue(const char *title, int16_t value_x10, const char *unit)
 {
   char value[8];
-  char line[17];
+  char line[32];
 
   UI_FormatSignedX10(value, sizeof(value), value_x10);
   (void)LCD_I2C_SetCursor(&lcd, 0U, 0U);
@@ -369,11 +446,12 @@ static void UI_DrawEditValue(const char *title, int16_t value_x10, const char *u
   (void)snprintf(line, sizeof(line), "%s%s A/B +/-", value, unit);
   (void)LCD_I2C_SetCursor(&lcd, 0U, 1U);
   (void)LCD_I2C_PrintPadded(&lcd, line, UI_LCD_COLS);
+  UI_ClearRows(2U);
 }
 
 static void UI_DrawNumericEdit(const char *title, const char *unit)
 {
-  char line[17];
+  char line[32];
   const char *value_text = (numeric_input_len == 0U) ? "_" : numeric_input;
 
   (void)LCD_I2C_SetCursor(&lcd, 0U, 0U);
@@ -383,6 +461,7 @@ static void UI_DrawNumericEdit(const char *title, const char *unit)
   (void)LCD_I2C_SetCursor(&lcd, 0U, 1U);
   (void)snprintf(line, sizeof(line), "0-9 *Dot DDel");
   (void)LCD_I2C_PrintPadded(&lcd, line, UI_LCD_COLS);
+  UI_ClearRows(2U);
 }
 
 static void UI_Draw(void)
@@ -646,6 +725,13 @@ void CabinetUI_Process(void)
   {
     UI_Draw();
   }
+}
+
+void CabinetUI_SetCurrentValues(float temperature, float humidity)
+{
+  current_temperature_x10 = UI_FloatToX10(temperature);
+  current_humidity_x10 = UI_FloatToX10(humidity);
+  redraw_requested = 1U;
 }
 
 const CabinetUI_SettingsTypeDef *CabinetUI_GetSettings(void)

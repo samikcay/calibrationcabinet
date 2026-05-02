@@ -18,6 +18,7 @@ typedef struct
 
 void CabinetUI_Init(I2C_HandleTypeDef *lcd_i2c);
 void CabinetUI_Process(void);
+void CabinetUI_SetCurrentValues(float temperature, float humidity);
 const CabinetUI_SettingsTypeDef *CabinetUI_GetSettings(void);
 
 #ifdef __cplusplus

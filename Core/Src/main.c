@@ -118,7 +118,10 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     CabinetUI_Process();
-    DHT22_GetValues(&sicaklik, &nem);
+    if (DHT22_GetValues(&sicaklik, &nem) == DHT22_OK)
+    {
+      CabinetUI_SetCurrentValues(sicaklik, nem);
+    }
   }
   /* USER CODE END 3 */
 }
