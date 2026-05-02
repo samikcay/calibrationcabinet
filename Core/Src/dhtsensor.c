@@ -92,6 +92,10 @@ DHT22_StatusTypeDef DHT22_GetValues(float *temperature, float *humidity)
 {
 	uint8_t data[5] = {0};
 	uint32_t high_time_us = 0;
+	DHT22_StatusTypeDef status = DHT22_OK;
+	uint32_t cycles_per_ms;
+	uint32_t start_cycles;
+	uint32_t elapsed_ms;
 
 	if (dht22_is_initialized == 0U)
 	{
@@ -105,38 +109,58 @@ DHT22_StatusTypeDef DHT22_GetValues(float *temperature, float *humidity)
 	DHT22_DelayUs(DHT22_START_HIGH_US);
 	DHT22_SetPinInput();
 
+	cycles_per_ms = HAL_RCC_GetHCLKFreq() / 1000U;
+	start_cycles = DWT->CYCCNT;
+
 	__disable_irq();
 
 	if (DHT22_WaitForPinState(GPIO_PIN_RESET, DHT22_RESPONSE_TIMEOUT, NULL) != DHT22_OK ||
 		DHT22_WaitForPinState(GPIO_PIN_SET, DHT22_RESPONSE_TIMEOUT, NULL) != DHT22_OK ||
 		DHT22_WaitForPinState(GPIO_PIN_RESET, DHT22_RESPONSE_TIMEOUT, NULL) != DHT22_OK)
 	{
-		__enable_irq();
-		return DHT22_ERROR_TIMEOUT;
+		status = DHT22_ERROR_TIMEOUT;
 	}
-
-	for (uint8_t bit = 0; bit < DHT22_BITS_COUNT; bit++)
+	else
 	{
-		if (DHT22_WaitForPinState(GPIO_PIN_SET, DHT22_BIT_TIMEOUT, NULL) != DHT22_OK)
+		for (uint8_t bit = 0; bit < DHT22_BITS_COUNT; bit++)
 		{
-			__enable_irq();
-			return DHT22_ERROR_TIMEOUT;
-		}
+			if (DHT22_WaitForPinState(GPIO_PIN_SET, DHT22_BIT_TIMEOUT, NULL) != DHT22_OK)
+			{
+				status = DHT22_ERROR_TIMEOUT;
+				break;
+			}
 
-		if (DHT22_WaitForPinState(GPIO_PIN_RESET, DHT22_BIT_TIMEOUT, &high_time_us) != DHT22_OK)
-		{
-			__enable_irq();
-			return DHT22_ERROR_TIMEOUT;
-		}
+			if (DHT22_WaitForPinState(GPIO_PIN_RESET, DHT22_BIT_TIMEOUT, &high_time_us) != DHT22_OK)
+			{
+				status = DHT22_ERROR_TIMEOUT;
+				break;
+			}
 
-		data[bit / 8U] <<= 1;
-		if (high_time_us > DHT22_ONE_THRESHOLD_US)
-		{
-			data[bit / 8U] |= 1U;
+			data[bit / 8U] <<= 1;
+			if (high_time_us > DHT22_ONE_THRESHOLD_US)
+			{
+				data[bit / 8U] |= 1U;
+			}
 		}
 	}
 
 	__enable_irq();
+
+	/* SysTick was suppressed during the critical section, so uwTick fell
+	 * behind real time. Use DWT (which kept counting) to advance the tick
+	 * by however many milliseconds elapsed. The pending SysTick exception
+	 * may fire once on re-enable; the resulting <=1 ms over-count is
+	 * acceptable for this application. */
+	elapsed_ms = (DWT->CYCCNT - start_cycles) / cycles_per_ms;
+	while (elapsed_ms-- > 0U)
+	{
+		HAL_IncTick();
+	}
+
+	if (status != DHT22_OK)
+	{
+		return status;
+	}
 
 	if ((uint8_t)(data[0] + data[1] + data[2] + data[3]) != data[4])
 	{

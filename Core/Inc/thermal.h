@@ -33,6 +33,7 @@ void  Thermal_SetSetpoint(float t_c);
 float Thermal_Step(float measured_c, float dt_s); /* returns u in [-1, +1] */
 void  Thermal_Reset(void);
 void  Thermal_ApplyOutput(float u); /* drives TIM3 CH1/CH2 via BTS7960 */
+void  Thermal_SetEnabled(uint8_t enabled); /* gates BTS7960 R_EN/L_EN */
 
 #ifdef __cplusplus
 }

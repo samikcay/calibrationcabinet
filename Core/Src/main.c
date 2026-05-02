@@ -162,6 +162,7 @@ int main(void)
       {
         float thermal_output;
 
+        Thermal_SetEnabled(1U);
         Thermal_SetSetpoint((float)settings->set_temperature_x10 / 10.0f);
         thermal_output = Thermal_Step(calibrated_temperature, dt_s);
         Thermal_ApplyOutput(thermal_output);
@@ -169,7 +170,7 @@ int main(void)
       }
       else
       {
-        Thermal_ApplyOutput(0.0f);
+        Thermal_SetEnabled(0U);
         Thermal_Reset();
         Humidity_AllOff();
       }

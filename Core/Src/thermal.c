@@ -41,8 +41,18 @@ void Thermal_Init(const pid_config_t *cfg)
     s_last_reversal_tick = 0U;
 
     Board_TIM3_PWM_Init();
-    Board_MainPeltier_Enable(1U);
     Thermal_ApplyOutput(0.0f);
+    Board_MainPeltier_Enable(0U);
+}
+
+void Thermal_SetEnabled(uint8_t enabled)
+{
+    if (enabled == 0U) {
+        Thermal_ApplyOutput(0.0f);
+        Board_MainPeltier_Enable(0U);
+    } else {
+        Board_MainPeltier_Enable(1U);
+    }
 }
 
 void Thermal_SetSetpoint(float t_c)

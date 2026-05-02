@@ -34,10 +34,7 @@ static HAL_StatusTypeDef LCD_I2C_PulseEnable(LCD_I2C_HandleTypeDef *lcd, uint8_t
     return status;
   }
 
-  HAL_Delay(1U);
-  status = LCD_I2C_WriteExpander(lcd, data & (uint8_t)~LCD_ENABLE);
-  HAL_Delay(1U);
-  return status;
+  return LCD_I2C_WriteExpander(lcd, data & (uint8_t)~LCD_ENABLE);
 }
 
 static HAL_StatusTypeDef LCD_I2C_Write4Bits(LCD_I2C_HandleTypeDef *lcd, uint8_t value)
