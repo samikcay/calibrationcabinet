@@ -1,6 +1,5 @@
 #include "thermal.h"
-#include "main.h"
-#include "tim.h"
+#include "board_config.h"
 #include <math.h>
 
 #define DEADBAND      0.02f   /* |u| below this → output = 0 */

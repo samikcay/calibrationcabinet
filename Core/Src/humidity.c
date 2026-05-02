@@ -1,5 +1,5 @@
 #include "humidity.h"
-#include "tim.h"
+#include "board_config.h"
 
 #define TIM3_ARR   999U    /* matches htim3.Init.Period */
 #define RH_HYST    3.0f    /* +/- % RH hysteresis band  */
