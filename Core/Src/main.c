@@ -17,9 +17,9 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
-#include "shtsensor.h"
 #include "main.h"
 #include "usb_host.h"
+#include "dhtsensor.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -102,7 +102,7 @@ int main(void)
   MX_SPI1_Init();
   MX_USB_HOST_Init();
   /* USER CODE BEGIN 2 */
-  SHT31_Init(&hi2c1);
+  DHT22_Init(GPIOD, GPIO_PIN_0);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -110,13 +110,11 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-    MX_USB_HOST_Process();
-
+	if (DHT22_GetValues(*sicaklik_degeri, *nem_degeri) == DHT22_OK)
+	{
+		LOG("Veriler cekildi.");
+	}
     /* USER CODE BEGIN 3 */
-    SHT31_GetValues(&sicaklik_degeri, &nem_degeri);
-    HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_12); // Yeşil LED
-    LOG()
-    HAL_Delay(500);
   }
   /* USER CODE END 3 */
 }
