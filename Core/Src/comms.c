@@ -183,6 +183,21 @@ system_state_t Comms_DeriveState(uint8_t alarm_mask,
     return STATE_RUNNING;
 }
 
+/* Format a float with 2 decimal places into out[]. Avoids %f because
+ * newlib-nano (the default in CubeIDE) stubs float printf out, which would
+ * make the JSON unparseable on the ESP32. */
+static void fmt_float_2dp(char *out, size_t out_size, float v)
+{
+    int32_t x100 = (int32_t)(v * 100.0f + (v >= 0.0f ? 0.5f : -0.5f));
+    int     neg  = (x100 < 0);
+    if (neg) x100 = -x100;
+
+    snprintf(out, out_size, "%s%ld.%02ld",
+             neg ? "-" : "",
+             (long)(x100 / 100),
+             (long)(x100 % 100));
+}
+
 void Comms_SendTelemetry(float          temperature_c,
                          float          humidity_rh,
                          float          setpoint_temp_c,
@@ -190,13 +205,18 @@ void Comms_SendTelemetry(float          temperature_c,
                          system_state_t state,
                          uint8_t        alarm_mask)
 {
+    char temp_s[12], hum_s[12], sp_temp_s[12], sp_hum_s[12];
+    fmt_float_2dp(temp_s,    sizeof(temp_s),    temperature_c);
+    fmt_float_2dp(hum_s,     sizeof(hum_s),     humidity_rh);
+    fmt_float_2dp(sp_temp_s, sizeof(sp_temp_s), setpoint_temp_c);
+    fmt_float_2dp(sp_hum_s,  sizeof(sp_hum_s),  setpoint_humidity_rh);
+
     char buf[160];
     int  n = snprintf(buf, sizeof(buf),
-        "{\"temperature\":%.2f,\"humidity\":%.2f,"
-        "\"setpoint_temp\":%.2f,\"setpoint_humidity\":%.2f,"
+        "{\"temperature\":%s,\"humidity\":%s,"
+        "\"setpoint_temp\":%s,\"setpoint_humidity\":%s,"
         "\"state\":\"%s\",\"alarm\":%u}\n",
-        (double)temperature_c, (double)humidity_rh,
-        (double)setpoint_temp_c, (double)setpoint_humidity_rh,
+        temp_s, hum_s, sp_temp_s, sp_hum_s,
         state_name(state), (unsigned)alarm_mask);
 
     if (n > 0 && n < (int)sizeof(buf)) {
