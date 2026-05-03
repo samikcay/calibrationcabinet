@@ -21,6 +21,12 @@ void CabinetUI_Process(void);
 void CabinetUI_SetCurrentValues(float temperature, float humidity);
 const CabinetUI_SettingsTypeDef *CabinetUI_GetSettings(void);
 
+/* Remote-command entry points used by the comms module. Either pointer in
+ * SetSetpoints may be NULL to leave that channel unchanged. */
+void CabinetUI_ApplyCommand_SetRunning(uint8_t running);
+void CabinetUI_ApplyCommand_SetSetpoints(const float *setpoint_temp_c,
+                                         const float *setpoint_humidity_rh);
+
 #ifdef __cplusplus
 }
 #endif

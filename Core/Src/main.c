@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "cabinet_ui.h"
+#include "comms.h"
 #include "dhtsensor.h"
 #include "humidity.h"
 #include "thermal.h"
@@ -54,7 +55,9 @@ SPI_HandleTypeDef hspi1;
 /* USER CODE BEGIN PV */
 float sicaklik = 0.0f;
 float nem = 0.0f;
-static uint8_t sensor_ok = 0U;
+static uint8_t  sensor_ok = 0U;
+static uint8_t  has_first_reading = 0U;
+static uint32_t consecutive_sensor_fails = 0U;
 static uint32_t last_dht_read_tick = 0U;
 static uint32_t last_control_tick = 0U;
 /* USER CODE END PV */
@@ -114,6 +117,7 @@ int main(void)
   DHT22_Init(GPIOD, GPIO_PIN_0);
   Thermal_Init(&k_default_pid);
   Humidity_Init();
+  Comms_Init();
   Thermal_ApplyOutput(0.0f);
   Humidity_AllOff();
   last_dht_read_tick = HAL_GetTick() - DHT_READ_INTERVAL_MS;
@@ -131,9 +135,9 @@ int main(void)
     /* USER CODE BEGIN 3 */
     uint32_t now = HAL_GetTick();
     const CabinetUI_SettingsTypeDef *settings = CabinetUI_GetSettings();
-    float calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
 
     CabinetUI_Process();
+    Comms_Process();
 
     if ((now - last_dht_read_tick) >= DHT_READ_INTERVAL_MS)
     {
@@ -141,13 +145,18 @@ int main(void)
 
       if (DHT22_GetValues(&sicaklik, &nem) == DHT22_OK)
       {
+        float calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
         sensor_ok = 1U;
-        calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
+        has_first_reading = 1U;
+        consecutive_sensor_fails = 0U;
         CabinetUI_SetCurrentValues(calibrated_temperature, nem);
       }
       else
       {
         sensor_ok = 0U;
+        if (consecutive_sensor_fails < UINT32_MAX) {
+          consecutive_sensor_fails++;
+        }
       }
     }
 
@@ -156,17 +165,34 @@ int main(void)
       float dt_s = (float)(now - last_control_tick) / 1000.0f;
       last_control_tick = now;
       settings = CabinetUI_GetSettings();
-      calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
+      float calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
 
-      if ((settings->running != 0U) && (sensor_ok != 0U))
+      float setpoint_temp_c = (float)settings->set_temperature_x10 / 10.0f;
+      float setpoint_hum_rh = (float)settings->set_humidity;
+
+      uint8_t alarm_mask = Comms_ComputeAlarms(consecutive_sensor_fails,
+                                               calibrated_temperature);
+      system_state_t state = Comms_DeriveState(alarm_mask,
+                                                has_first_reading,
+                                                settings->running,
+                                                calibrated_temperature,
+                                                nem,
+                                                setpoint_temp_c,
+                                                setpoint_hum_rh);
+
+      uint8_t actuators_enabled = (alarm_mask == 0U) &&
+                                  (settings->running != 0U) &&
+                                  (sensor_ok != 0U);
+
+      if (actuators_enabled)
       {
         float thermal_output;
 
         Thermal_SetEnabled(1U);
-        Thermal_SetSetpoint((float)settings->set_temperature_x10 / 10.0f);
+        Thermal_SetSetpoint(setpoint_temp_c);
         thermal_output = Thermal_Step(calibrated_temperature, dt_s);
         Thermal_ApplyOutput(thermal_output);
-        Humidity_Step(nem, (float)settings->set_humidity);
+        Humidity_Step(nem, setpoint_hum_rh);
       }
       else
       {
@@ -174,6 +200,10 @@ int main(void)
         Thermal_Reset();
         Humidity_AllOff();
       }
+
+      Comms_SendTelemetry(calibrated_temperature, nem,
+                          setpoint_temp_c, setpoint_hum_rh,
+                          state, alarm_mask);
     }
   }
   /* USER CODE END 3 */

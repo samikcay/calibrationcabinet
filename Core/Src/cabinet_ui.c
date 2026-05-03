@@ -2,6 +2,7 @@
 #include "keypad.h"
 #include "lcd_i2c.h"
 #include "main.h"
+#include <stdint.h>
 #include <stdio.h>
 
 #define UI_REFRESH_MS 250U
@@ -737,4 +738,34 @@ void CabinetUI_SetCurrentValues(float temperature, float humidity)
 const CabinetUI_SettingsTypeDef *CabinetUI_GetSettings(void)
 {
   return &settings;
+}
+
+void CabinetUI_ApplyCommand_SetRunning(uint8_t running)
+{
+  settings.running = (running != 0U) ? 1U : 0U;
+  redraw_requested = 1U;
+}
+
+void CabinetUI_ApplyCommand_SetSetpoints(const float *setpoint_temp_c,
+                                         const float *setpoint_humidity_rh)
+{
+  if (setpoint_temp_c != NULL)
+  {
+    float v = (*setpoint_temp_c * 10.0f);
+    int32_t x10 = (int32_t)((v >= 0.0f) ? (v + 0.5f) : (v - 0.5f));
+    if (x10 < INT16_MIN) x10 = INT16_MIN;
+    if (x10 > INT16_MAX) x10 = INT16_MAX;
+    settings.set_temperature_x10 = (int16_t)x10;
+  }
+
+  if (setpoint_humidity_rh != NULL)
+  {
+    float h = *setpoint_humidity_rh;
+    if (h < 0.0f)   h = 0.0f;
+    if (h > 100.0f) h = 100.0f;
+    settings.set_humidity = (uint8_t)(h + 0.5f);
+  }
+
+  UI_ClampSettings();
+  redraw_requested = 1U;
 }
