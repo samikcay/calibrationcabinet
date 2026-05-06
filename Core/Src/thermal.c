@@ -69,13 +69,21 @@ float Thermal_Step(float measured_c, float dt_s)
     }
 
     float e = s_setpoint - measured_c;
-    float p = s_cfg.kp * e;
+    uint8_t heating = (e > 0.0f) ? 1U : 0U;
 
-    s_i_term = clampf(s_i_term + s_cfg.ki * e * dt_s,
+    float kp     = (heating && s_cfg.kp_heat     > 0.0f) ? s_cfg.kp_heat     : s_cfg.kp;
+    float ki     = (heating && s_cfg.ki_heat     > 0.0f) ? s_cfg.ki_heat     : s_cfg.ki;
+    float kd     = (heating && s_cfg.kd_heat     > 0.0f) ? s_cfg.kd_heat     : s_cfg.kd;
+    float du_max = (heating && s_cfg.du_max_heat > 0.0f) ? s_cfg.du_max_heat : s_cfg.du_max;
+    float u_max  = (heating && s_cfg.u_max_heat  > 0.0f) ? s_cfg.u_max_heat  : s_cfg.u_max;
+
+    float p = kp * e;
+
+    s_i_term = clampf(s_i_term + ki * e * dt_s,
                       s_cfg.i_min, s_cfg.i_max);
 
     if (s_has_prev_measured != 0U) {
-        d_raw = -s_cfg.kd * (measured_c - s_prev_measured) / dt_s;
+        d_raw = -kd * (measured_c - s_prev_measured) / dt_s;
     } else {
         s_has_prev_measured = 1U;
     }
@@ -87,19 +95,19 @@ float Thermal_Step(float measured_c, float dt_s)
 
     float u_unlimited = p + s_i_term + s_d_filtered;
     float du = u_unlimited - s_prev_u;
-    if (s_cfg.du_max > 0.0f) {
-        float du_max = s_cfg.du_max * dt_s;
-        if (du > du_max) {
-            u_unlimited = s_prev_u + du_max;
-        } else if (du < -du_max) {
-            u_unlimited = s_prev_u - du_max;
+    if (du_max > 0.0f) {
+        float du_lim = du_max * dt_s;
+        if (du > du_lim) {
+            u_unlimited = s_prev_u + du_lim;
+        } else if (du < -du_lim) {
+            u_unlimited = s_prev_u - du_lim;
         }
     }
 
-    float u = clampf(u_unlimited, s_cfg.u_min, s_cfg.u_max);
+    float u = clampf(u_unlimited, s_cfg.u_min, u_max);
 
-    if (s_cfg.kp > 0.0f) {
-        s_i_term += (1.0f / s_cfg.kp) * (u - u_unlimited);
+    if (kp > 0.0f) {
+        s_i_term += (1.0f / kp) * (u - u_unlimited);
         s_i_term = clampf(s_i_term, s_cfg.i_min, s_cfg.i_max);
     }
 
