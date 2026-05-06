@@ -5,10 +5,11 @@
 
 /* Matches sensorDataQueue msgSize = 16 bytes */
 typedef struct {
-    float   temperature_c;
-    float   humidity_rh;
-    uint8_t valid;
-    uint8_t _pad[7];
+    float    temperature_c;     /* calibration offset already applied */
+    float    humidity_rh;
+    uint8_t  valid;             /* 1 if last read OK */
+    uint8_t  _pad[3];
+    uint32_t consecutive_fails; /* sensor read failures up to and including this frame */
 } sensor_frame_t;
 
 typedef struct {

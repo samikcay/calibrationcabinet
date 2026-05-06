@@ -18,7 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "usb_host.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -36,8 +36,11 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define DHT_READ_INTERVAL_MS 2000U
-#define CONTROL_INTERVAL_MS  1000U
+#define SENSOR_PERIOD_MS         2000U
+#define CONTROL_QUEUE_TIMEOUT_MS 2500U
+#define UI_PERIOD_MS               20U
+#define COMMS_PERIOD_MS            50U
+#define SUPERVISOR_PERIOD_MS     1000U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -52,14 +55,77 @@ I2S_HandleTypeDef hi2s3;
 
 SPI_HandleTypeDef hspi1;
 
+/* Definitions for supervisorTask */
+osThreadId_t supervisorTaskHandle;
+const osThreadAttr_t supervisorTask_attributes = {
+  .name = "supervisorTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for controlTask */
+osThreadId_t controlTaskHandle;
+const osThreadAttr_t controlTask_attributes = {
+  .name = "controlTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+/* Definitions for sensorTask */
+osThreadId_t sensorTaskHandle;
+const osThreadAttr_t sensorTask_attributes = {
+  .name = "sensorTask",
+  .stack_size = 384 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for commTask */
+osThreadId_t commTaskHandle;
+const osThreadAttr_t commTask_attributes = {
+  .name = "commTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for uiTask */
+osThreadId_t uiTaskHandle;
+const osThreadAttr_t uiTask_attributes = {
+  .name = "uiTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
+};
+/* Definitions for sensorDataQueue */
+osMessageQueueId_t sensorDataQueueHandle;
+const osMessageQueueAttr_t sensorDataQueue_attributes = {
+  .name = "sensorDataQueue"
+};
+/* Definitions for userCmdQueue */
+osMessageQueueId_t userCmdQueueHandle;
+const osMessageQueueAttr_t userCmdQueue_attributes = {
+  .name = "userCmdQueue"
+};
+/* Definitions for lcdRenderQueue */
+osMessageQueueId_t lcdRenderQueueHandle;
+const osMessageQueueAttr_t lcdRenderQueue_attributes = {
+  .name = "lcdRenderQueue"
+};
+/* Definitions for stableCheckTimer */
+osTimerId_t stableCheckTimerHandle;
+const osTimerAttr_t stableCheckTimer_attributes = {
+  .name = "stableCheckTimer"
+};
+/* Definitions for actuatorMutex */
+osMutexId_t actuatorMutexHandle;
+const osMutexAttr_t actuatorMutex_attributes = {
+  .name = "actuatorMutex"
+};
+/* Definitions for i2cMutex */
+osMutexId_t i2cMutexHandle;
+const osMutexAttr_t i2cMutex_attributes = {
+  .name = "i2cMutex"
+};
+/* Definitions for sysStateEventGroup */
+osEventFlagsId_t sysStateEventGroupHandle;
+const osEventFlagsAttr_t sysStateEventGroup_attributes = {
+  .name = "sysStateEventGroup"
+};
 /* USER CODE BEGIN PV */
-float sicaklik = 0.0f;
-float nem = 0.0f;
-static uint8_t  sensor_ok = 0U;
-static uint8_t  has_first_reading = 0U;
-static uint32_t consecutive_sensor_fails = 0U;
-static uint32_t last_dht_read_tick = 0U;
-static uint32_t last_control_tick = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,7 +134,12 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
-void MX_USB_HOST_Process(void);
+void StartSupervisorTask(void *argument);
+void StartControlTask(void *argument);
+void StartSensorTask(void *argument);
+void StartCommTask(void *argument);
+void StartUiTask(void *argument);
+void stableCheckTimerCallback(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -111,7 +182,6 @@ int main(void)
   MX_I2C1_Init();
   MX_I2S3_Init();
   MX_SPI1_Init();
-  MX_USB_HOST_Init();
   /* USER CODE BEGIN 2 */
   CabinetUI_Init(&hi2c1);
   DHT22_Init(GPIOD, GPIO_PIN_0);
@@ -120,91 +190,86 @@ int main(void)
   Comms_Init();
   Thermal_ApplyOutput(0.0f);
   Humidity_AllOff();
-  last_dht_read_tick = HAL_GetTick() - DHT_READ_INTERVAL_MS;
-  last_control_tick = HAL_GetTick();
-
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize();
+  /* Create the mutex(es) */
+  /* creation of actuatorMutex */
+  actuatorMutexHandle = osMutexNew(&actuatorMutex_attributes);
+
+  /* creation of i2cMutex */
+  i2cMutexHandle = osMutexNew(&i2cMutex_attributes);
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* Create the timer(s) */
+  /* creation of stableCheckTimer */
+  stableCheckTimerHandle = osTimerNew(stableCheckTimerCallback, osTimerPeriodic, NULL, &stableCheckTimer_attributes);
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* creation of sensorDataQueue */
+  sensorDataQueueHandle = osMessageQueueNew (4, 16, &sensorDataQueue_attributes);
+
+  /* creation of userCmdQueue */
+  userCmdQueueHandle = osMessageQueueNew (8, 16, &userCmdQueue_attributes);
+
+  /* creation of lcdRenderQueue */
+  lcdRenderQueueHandle = osMessageQueueNew (8, 32, &lcdRenderQueue_attributes);
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of supervisorTask */
+  supervisorTaskHandle = osThreadNew(StartSupervisorTask, NULL, &supervisorTask_attributes);
+
+  /* creation of controlTask */
+  controlTaskHandle = osThreadNew(StartControlTask, NULL, &controlTask_attributes);
+
+  /* creation of sensorTask */
+  sensorTaskHandle = osThreadNew(StartSensorTask, NULL, &sensorTask_attributes);
+
+  /* creation of commTask */
+  commTaskHandle = osThreadNew(StartCommTask, NULL, &commTask_attributes);
+
+  /* creation of uiTask */
+  uiTaskHandle = osThreadNew(StartUiTask, NULL, &uiTask_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* creation of sysStateEventGroup */
+  sysStateEventGroupHandle = osEventFlagsNew(&sysStateEventGroup_attributes);
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
     /* USER CODE END WHILE */
-    MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-    uint32_t now = HAL_GetTick();
-    const CabinetUI_SettingsTypeDef *settings = CabinetUI_GetSettings();
-
-    CabinetUI_Process();
-    Comms_Process();
-
-    if ((now - last_dht_read_tick) >= DHT_READ_INTERVAL_MS)
-    {
-      last_dht_read_tick = now;
-
-      if (DHT22_GetValues(&sicaklik, &nem) == DHT22_OK)
-      {
-        float calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
-        sensor_ok = 1U;
-        has_first_reading = 1U;
-        consecutive_sensor_fails = 0U;
-        CabinetUI_SetCurrentValues(calibrated_temperature, nem);
-      }
-      else
-      {
-        sensor_ok = 0U;
-        if (consecutive_sensor_fails < UINT32_MAX) {
-          consecutive_sensor_fails++;
-        }
-      }
-    }
-
-    if ((now - last_control_tick) >= CONTROL_INTERVAL_MS)
-    {
-      float dt_s = (float)(now - last_control_tick) / 1000.0f;
-      last_control_tick = now;
-      settings = CabinetUI_GetSettings();
-      float calibrated_temperature = sicaklik + ((float)settings->calibration_offset_x10 / 10.0f);
-
-      float setpoint_temp_c = (float)settings->set_temperature_x10 / 10.0f;
-      float setpoint_hum_rh = (float)settings->set_humidity;
-
-      uint8_t alarm_mask = Comms_ComputeAlarms(consecutive_sensor_fails,
-                                               calibrated_temperature);
-      system_state_t state = Comms_DeriveState(alarm_mask,
-                                                has_first_reading,
-                                                settings->running,
-                                                calibrated_temperature,
-                                                nem,
-                                                setpoint_temp_c,
-                                                setpoint_hum_rh);
-
-      uint8_t actuators_enabled = (alarm_mask == 0U) &&
-                                  (settings->running != 0U) &&
-                                  (sensor_ok != 0U);
-
-      if (actuators_enabled)
-      {
-        float thermal_output;
-
-        Thermal_SetEnabled(1U);
-        Thermal_SetSetpoint(setpoint_temp_c);
-        thermal_output = Thermal_Step(calibrated_temperature, dt_s);
-        Thermal_ApplyOutput(thermal_output);
-        Humidity_Step(nem, setpoint_hum_rh);
-      }
-      else
-      {
-        Thermal_SetEnabled(0U);
-        Thermal_Reset();
-        Humidity_AllOff();
-      }
-
-      Comms_SendTelemetry(calibrated_temperature, nem,
-                          setpoint_temp_c, setpoint_hum_rh,
-                          state, alarm_mask);
-    }
   }
   /* USER CODE END 3 */
 }
@@ -441,6 +506,20 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : VBUS_FS_Pin */
+  GPIO_InitStruct.Pin = VBUS_FS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(VBUS_FS_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : OTG_FS_ID_Pin OTG_FS_DM_Pin OTG_FS_DP_Pin */
+  GPIO_InitStruct.Pin = OTG_FS_ID_Pin|OTG_FS_DM_Pin|OTG_FS_DP_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF10_OTG_FS;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /*Configure GPIO pins : PD0 OTG_FS_OverCurrent_Pin */
   GPIO_InitStruct.Pin = GPIO_PIN_0|OTG_FS_OverCurrent_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
@@ -473,6 +552,236 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartSupervisorTask */
+/**
+  * @brief  Function implementing the supervisorTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartSupervisorTask */
+void StartSupervisorTask(void *argument)
+{
+  /* USER CODE BEGIN 5 */
+  (void)argument;
+  for (;;)
+  {
+    osDelay(SUPERVISOR_PERIOD_MS);
+  }
+  /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartControlTask */
+/**
+* @brief Function implementing the controlTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartControlTask */
+void StartControlTask(void *argument)
+{
+  /* USER CODE BEGIN StartControlTask */
+  (void)argument;
+
+  static uint8_t has_first_reading = 0U;
+  sensor_frame_t f;
+  uint32_t       last_pid_tick = osKernelGetTickCount();
+
+  for (;;)
+  {
+    osStatus_t st = osMessageQueueGet(sensorDataQueueHandle, &f, NULL,
+                                      CONTROL_QUEUE_TIMEOUT_MS);
+
+    /* Sensor task silent → safe-state actuators and re-arm. */
+    if (st != osOK)
+    {
+      Thermal_SetEnabled(0U);
+      Thermal_Reset();
+      Humidity_AllOff();
+      last_pid_tick = osKernelGetTickCount();
+      continue;
+    }
+
+    if (f.valid != 0U) {
+      has_first_reading = 1U;
+    }
+
+    const CabinetUI_SettingsTypeDef *settings = CabinetUI_GetSettings();
+    float setpoint_temp_c = (float)settings->set_temperature_x10 / 10.0f;
+    float setpoint_hum_rh = (float)settings->set_humidity;
+
+    uint8_t alarm_mask = Comms_ComputeAlarms(f.consecutive_fails, f.temperature_c);
+    system_state_t state = Comms_DeriveState(alarm_mask,
+                                             has_first_reading,
+                                             settings->running,
+                                             f.temperature_c,
+                                             f.humidity_rh,
+                                             setpoint_temp_c,
+                                             setpoint_hum_rh);
+
+    uint8_t actuators_enabled = (alarm_mask == 0U) &&
+                                (settings->running != 0U) &&
+                                (f.valid != 0U);
+
+    uint32_t now  = osKernelGetTickCount();
+    float    dt_s = (float)(now - last_pid_tick) / (float)osKernelGetTickFreq();
+    last_pid_tick = now;
+    /* First iteration after enable / queue-timeout recovery: clamp dt to a
+     * sane value so the integrator/derivative don't see a giant first step. */
+    if (dt_s <= 0.0f || dt_s > 5.0f) {
+      dt_s = 1.0f;
+    }
+
+    if (actuators_enabled)
+    {
+      Thermal_SetEnabled(1U);
+      Thermal_SetSetpoint(setpoint_temp_c);
+      float u = Thermal_Step(f.temperature_c, dt_s);
+      Thermal_ApplyOutput(u);
+      Humidity_Step(f.humidity_rh, setpoint_hum_rh);
+    }
+    else
+    {
+      Thermal_SetEnabled(0U);
+      Thermal_Reset();
+      Humidity_AllOff();
+    }
+
+    Comms_SendTelemetry(f.temperature_c, f.humidity_rh,
+                        setpoint_temp_c, setpoint_hum_rh,
+                        state, alarm_mask);
+  }
+  /* USER CODE END StartControlTask */
+}
+
+/* USER CODE BEGIN Header_StartSensorTask */
+/**
+* @brief Function implementing the sensorTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartSensorTask */
+void StartSensorTask(void *argument)
+{
+  /* USER CODE BEGIN StartSensorTask */
+  (void)argument;
+
+  uint32_t       consecutive_fails = 0U;
+  uint32_t       last_wake         = osKernelGetTickCount();
+  sensor_frame_t f                 = {0};
+
+  for (;;)
+  {
+    float t = 0.0f;
+    float h = 0.0f;
+
+    if (DHT22_GetValues(&t, &h) == DHT22_OK)
+    {
+      const CabinetUI_SettingsTypeDef *settings = CabinetUI_GetSettings();
+      float t_cal = t + ((float)settings->calibration_offset_x10 / 10.0f);
+
+      f.temperature_c     = t_cal;
+      f.humidity_rh       = h;
+      f.valid             = 1U;
+      consecutive_fails   = 0U;
+      f.consecutive_fails = 0U;
+
+      CabinetUI_SetCurrentValues(t_cal, h);
+    }
+    else
+    {
+      f.valid = 0U;
+      if (consecutive_fails < UINT32_MAX) {
+        consecutive_fails++;
+      }
+      f.consecutive_fails = consecutive_fails;
+      /* Keep last good temperature_c/humidity_rh in the frame so the control
+       * task's alarm logic and telemetry have something coherent to report. */
+    }
+
+    /* Drop on full queue: control task is slower than sensor cadence by
+     * design; a backlog signals control-task stall, not normal load. */
+    (void)osMessageQueuePut(sensorDataQueueHandle, &f, 0U, 0U);
+
+    osDelayUntil(last_wake + SENSOR_PERIOD_MS);
+    last_wake += SENSOR_PERIOD_MS;
+  }
+  /* USER CODE END StartSensorTask */
+}
+
+/* USER CODE BEGIN Header_StartCommTask */
+/**
+* @brief Function implementing the commTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartCommTask */
+void StartCommTask(void *argument)
+{
+  /* USER CODE BEGIN StartCommTask */
+  (void)argument;
+
+  uint32_t last_wake = osKernelGetTickCount();
+  for (;;)
+  {
+    Comms_Process();
+    osDelayUntil(last_wake + COMMS_PERIOD_MS);
+    last_wake += COMMS_PERIOD_MS;
+  }
+  /* USER CODE END StartCommTask */
+}
+
+/* USER CODE BEGIN Header_StartUiTask */
+/**
+* @brief Function implementing the uiTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartUiTask */
+void StartUiTask(void *argument)
+{
+  /* USER CODE BEGIN StartUiTask */
+  (void)argument;
+
+  uint32_t last_wake = osKernelGetTickCount();
+  for (;;)
+  {
+    CabinetUI_Process();
+    osDelayUntil(last_wake + UI_PERIOD_MS);
+    last_wake += UI_PERIOD_MS;
+  }
+  /* USER CODE END StartUiTask */
+}
+
+/* stableCheckTimerCallback function */
+void stableCheckTimerCallback(void *argument)
+{
+  /* USER CODE BEGIN stableCheckTimerCallback */
+  (void)argument;
+  /* USER CODE END stableCheckTimerCallback */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
