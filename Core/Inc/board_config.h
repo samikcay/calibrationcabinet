@@ -8,11 +8,13 @@
  * TIM3 is configured directly here because this project does not include
  * the STM32 HAL TIM module.
  *
- * TIM3 - 1 kHz PWM, ARR = 999:
+ * TIM3 - 1 kHz PWM, ARR = 999 (only main Peltier uses PWM):
  *   CH1 PC6 = Main Peltier BTS7960 RPWM (heat)
  *   CH2 PB5 = Main Peltier BTS7960 LPWM (cool)
- *   CH3 PB0 = Humidifier D4184 PWM
- *   CH4 PB1 = Condensation Peltier D4184 PWM
+ *
+ * GPIO ON/OFF (driven full-on or full-off, no PWM):
+ *   PB0 = Humidifier D4184 gate
+ *   PB1 = Condensation Peltier D4184 gate
  */
 
 #define BTS_R_EN_Pin         GPIO_PIN_4

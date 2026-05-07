@@ -24,7 +24,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "app_types.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,7 +42,6 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-setpoints_t g_active_setpoints = { .temp_target = 25.0f, .rh_target = 50.0f };
 /* USER CODE END Variables */
 
 /* Private function prototypes -----------------------------------------------*/

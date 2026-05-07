@@ -10,22 +10,12 @@
 
 #define COMMS_OVER_TEMP_LIMIT_C       80.0f
 #define COMMS_SENSOR_FAIL_THRESHOLD   3u
-#define COMMS_STANDBY_TEMP_BAND_C     0.5f
-#define COMMS_STANDBY_RH_BAND         3.0f
 
 void Comms_Init(void);
 void Comms_Process(void);
 
 uint8_t        Comms_ComputeAlarms(uint32_t consecutive_sensor_fails,
                                    float    temperature_c);
-
-system_state_t Comms_DeriveState(uint8_t  alarm_mask,
-                                 uint8_t  has_first_reading,
-                                 uint8_t  running,
-                                 float    temperature_c,
-                                 float    humidity_rh,
-                                 float    setpoint_temp_c,
-                                 float    setpoint_humidity_rh);
 
 void Comms_SendTelemetry(float          temperature_c,
                          float          humidity_rh,
