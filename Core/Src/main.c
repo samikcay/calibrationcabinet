@@ -26,6 +26,7 @@
 #include "comms.h"
 #include "dhtsensor.h"
 #include "humidity.h"
+#include "state_machine.h"
 #include "thermal.h"
 /* USER CODE END Includes */
 
@@ -87,7 +88,7 @@ const osThreadAttr_t commTask_attributes = {
 osThreadId_t uiTaskHandle;
 const osThreadAttr_t uiTask_attributes = {
   .name = "uiTask",
-  .stack_size = 512 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityBelowNormal,
 };
 /* Definitions for sensorDataQueue */
@@ -214,7 +215,9 @@ int main(void)
   stableCheckTimerHandle = osTimerNew(stableCheckTimerCallback, osTimerPeriodic, NULL, &stableCheckTimer_attributes);
 
   /* USER CODE BEGIN RTOS_TIMERS */
-  /* start timers, add new ones, ... */
+  /* Stable-check timer is always running; the callback gates on FSM state
+   * (RUNNING/STANDBY) per TDR §3.4. */
+  osTimerStart(stableCheckTimerHandle, 1000U);
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
@@ -335,7 +338,7 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.ClockSpeed = 50000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
@@ -546,11 +549,28 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
+  /* B1 user button as EXTI rising edge → posts EV_STOP to FSM. Override the
+   * CubeMX-generated EVT_RISING mode (event-only, no IRQ). */
+  GPIO_InitStruct.Pin  = B1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+
+  /* Priority must be >= configMAX_SYSCALL_INTERRUPT_PRIORITY (default 5) so
+   * the ISR can call FreeRTOS API. */
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 6, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == B1_Pin)
+  {
+    StateMachine_PostEvent(EV_STOP);
+  }
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartSupervisorTask */
@@ -564,9 +584,10 @@ void StartSupervisorTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
   (void)argument;
+  StateMachine_Init();
   for (;;)
   {
-    osDelay(SUPERVISOR_PERIOD_MS);
+    StateMachine_RunStep();
   }
   /* USER CODE END 5 */
 }
@@ -583,7 +604,6 @@ void StartControlTask(void *argument)
   /* USER CODE BEGIN StartControlTask */
   (void)argument;
 
-  static uint8_t has_first_reading = 0U;
   sensor_frame_t f;
   uint32_t       last_pid_tick = osKernelGetTickCount();
 
@@ -592,36 +612,38 @@ void StartControlTask(void *argument)
     osStatus_t st = osMessageQueueGet(sensorDataQueueHandle, &f, NULL,
                                       CONTROL_QUEUE_TIMEOUT_MS);
 
-    /* Sensor task silent → safe-state actuators and re-arm. */
+    /* Sensor task silent → safe-state actuators and notify FSM. */
     if (st != osOK)
     {
       Thermal_SetEnabled(0U);
       Thermal_Reset();
       Humidity_AllOff();
+      StateMachine_PostEvent(EV_SENSOR_TIMEOUT);
       last_pid_tick = osKernelGetTickCount();
       continue;
     }
 
-    if (f.valid != 0U) {
-      has_first_reading = 1U;
+    /* Drive FSM from sensor frame quality. */
+    if (f.consecutive_fails >= COMMS_SENSOR_FAIL_THRESHOLD) {
+      StateMachine_PostEvent(EV_SENSOR_FAULT);
+    }
+    if ((f.valid != 0U) && (f.temperature_c > COMMS_OVER_TEMP_LIMIT_C)) {
+      StateMachine_PostEvent(EV_OVER_TEMP);
     }
 
     const CabinetUI_SettingsTypeDef *settings = CabinetUI_GetSettings();
     float setpoint_temp_c = (float)settings->set_temperature_x10 / 10.0f;
     float setpoint_hum_rh = (float)settings->set_humidity;
 
-    uint8_t alarm_mask = Comms_ComputeAlarms(f.consecutive_fails, f.temperature_c);
-    system_state_t state = Comms_DeriveState(alarm_mask,
-                                             has_first_reading,
-                                             settings->running,
-                                             f.temperature_c,
-                                             f.humidity_rh,
-                                             setpoint_temp_c,
-                                             setpoint_hum_rh);
+    /* Push snapshot for the stable-check timer. Always update so the timer
+     * sees fresh data even when actuators are disabled. */
+    StateMachine_UpdatePidSnapshot(f.temperature_c, f.humidity_rh,
+                                   setpoint_temp_c, setpoint_hum_rh);
 
-    uint8_t actuators_enabled = (alarm_mask == 0U) &&
-                                (settings->running != 0U) &&
-                                (f.valid != 0U);
+    system_state_t state             = StateMachine_Get();
+    uint8_t        actuators_enabled = ((state == STATE_RUNNING) ||
+                                        (state == STATE_STANDBY)) &&
+                                       (f.valid != 0U);
 
     uint32_t now  = osKernelGetTickCount();
     float    dt_s = (float)(now - last_pid_tick) / (float)osKernelGetTickFreq();
@@ -647,6 +669,8 @@ void StartControlTask(void *argument)
       Humidity_AllOff();
     }
 
+    /* Telemetry alarm bitmask is informational; FSM is authoritative for state. */
+    uint8_t alarm_mask = Comms_ComputeAlarms(f.consecutive_fails, f.temperature_c);
     Comms_SendTelemetry(f.temperature_c, f.humidity_rh,
                         setpoint_temp_c, setpoint_hum_rh,
                         state, alarm_mask);
@@ -666,9 +690,10 @@ void StartSensorTask(void *argument)
   /* USER CODE BEGIN StartSensorTask */
   (void)argument;
 
-  uint32_t       consecutive_fails = 0U;
-  uint32_t       last_wake         = osKernelGetTickCount();
-  sensor_frame_t f                 = {0};
+  uint32_t       consecutive_fails  = 0U;
+  uint8_t        first_reading_sent = 0U;
+  uint32_t       last_wake          = osKernelGetTickCount();
+  sensor_frame_t f                  = {0};
 
   for (;;)
   {
@@ -687,6 +712,11 @@ void StartSensorTask(void *argument)
       f.consecutive_fails = 0U;
 
       CabinetUI_SetCurrentValues(t_cal, h);
+
+      if (first_reading_sent == 0U) {
+        StateMachine_NotifyFirstReading();
+        first_reading_sent = 1U;
+      }
     }
     else
     {
@@ -695,8 +725,6 @@ void StartSensorTask(void *argument)
         consecutive_fails++;
       }
       f.consecutive_fails = consecutive_fails;
-      /* Keep last good temperature_c/humidity_rh in the frame so the control
-       * task's alarm logic and telemetry have something coherent to report. */
     }
 
     /* Drop on full queue: control task is slower than sensor cadence by
@@ -746,6 +774,11 @@ void StartUiTask(void *argument)
   uint32_t last_wake = osKernelGetTickCount();
   for (;;)
   {
+    /* Heartbeat: LD4 (green, PD12) toggles every cycle. If the LCD freezes
+     * but this LED keeps blinking, uiTask is alive — likely stuck in an LCD
+     * I2C transaction. If it stops, uiTask itself is dead. */
+    HAL_GPIO_TogglePin(GPIOD, LD4_Pin);
+
     CabinetUI_Process();
     osDelayUntil(last_wake + UI_PERIOD_MS);
     last_wake += UI_PERIOD_MS;
@@ -758,6 +791,7 @@ void stableCheckTimerCallback(void *argument)
 {
   /* USER CODE BEGIN stableCheckTimerCallback */
   (void)argument;
+  StateMachine_StableCheck();
   /* USER CODE END stableCheckTimerCallback */
 }
 
@@ -790,10 +824,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
+  /* All four LEDs blink in sync = FreeRTOS hook fault (stack overflow / malloc
+   * failed) or HAL error. Single-LED blink = CPU fault — see stm32f4xx_it.c. */
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  for (;;)
   {
+    HAL_GPIO_TogglePin(GPIOD, LD3_Pin | LD4_Pin | LD5_Pin | LD6_Pin);
+    for (volatile uint32_t i = 0U; i < 400000U; i++) { __NOP(); }
   }
   /* USER CODE END Error_Handler_Debug */
 }

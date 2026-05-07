@@ -25,15 +25,15 @@ void Board_TIM3_PWM_Init(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = GPIO_PIN_1 | GPIO_PIN_5;
+    GPIO_InitStruct.Pin = GPIO_PIN_5;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-    GPIO_InitStruct.Pin = GPIO_PIN_0;
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0 | GPIO_PIN_1, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -54,14 +54,11 @@ void Board_TIM3_PWM_Init(void)
     TIM3->ARR = BOARD_TIM3_PWM_PERIOD;
     TIM3->CCR1 = 0U;
     TIM3->CCR2 = 0U;
-    TIM3->CCR3 = 0U;
-    TIM3->CCR4 = 0U;
 
+    /* CH1/CH2 only — main Peltier. CH3/CH4 are now GPIO ON/OFF (PB0/PB1). */
     TIM3->CCMR1 = (6U << TIM_CCMR1_OC1M_Pos) | TIM_CCMR1_OC1PE |
                   (6U << TIM_CCMR1_OC2M_Pos) | TIM_CCMR1_OC2PE;
-    TIM3->CCMR2 = (6U << TIM_CCMR2_OC3M_Pos) | TIM_CCMR2_OC3PE |
-                  (6U << TIM_CCMR2_OC4M_Pos) | TIM_CCMR2_OC4PE;
-    TIM3->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E | TIM_CCER_CC3E | TIM_CCER_CC4E;
+    TIM3->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E;
     TIM3->EGR = TIM_EGR_UG;
     TIM3->CR1 = TIM_CR1_ARPE | TIM_CR1_CEN;
 
@@ -123,5 +120,6 @@ void Board_Humidifier_Set(uint32_t compare)
 
 void Board_CondensationPeltier_Set(uint32_t compare)
 {
-    Board_TIM3_PWM_Set(BOARD_TIM3_CH4, compare);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1,
+                      (compare > 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }

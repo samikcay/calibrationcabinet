@@ -1,5 +1,6 @@
 #include "comms.h"
 #include "cabinet_ui.h"
+#include "state_machine.h"
 #include "stm32f4xx_hal.h"
 #include <math.h>
 #include <stdio.h>
@@ -130,18 +131,6 @@ static void uart_send_blocking(const char *s, uint16_t len)
     }
 }
 
-static const char *state_name(system_state_t s)
-{
-    switch (s) {
-        case STATE_INIT:    return "INIT";
-        case STATE_IDLE:    return "IDLE";
-        case STATE_RUNNING: return "RUNNING";
-        case STATE_ALARM:   return "ALARM";
-        case STATE_STANDBY: return "STANDBY";
-        default:            return "UNKNOWN";
-    }
-}
-
 uint8_t Comms_ComputeAlarms(uint32_t consecutive_sensor_fails, float temperature_c)
 {
     uint8_t mask = COMMS_ALARM_NONE;
@@ -157,30 +146,6 @@ uint8_t Comms_ComputeAlarms(uint32_t consecutive_sensor_fails, float temperature
     }
 
     return mask;
-}
-
-system_state_t Comms_DeriveState(uint8_t alarm_mask,
-                                 uint8_t has_first_reading,
-                                 uint8_t running,
-                                 float   temperature_c,
-                                 float   humidity_rh,
-                                 float   setpoint_temp_c,
-                                 float   setpoint_humidity_rh)
-{
-    if (alarm_mask != 0U) {
-        return STATE_ALARM;
-    }
-    if (has_first_reading == 0U) {
-        return STATE_INIT;
-    }
-    if (running == 0U) {
-        return STATE_IDLE;
-    }
-    if ((fabsf(temperature_c - setpoint_temp_c)   < COMMS_STANDBY_TEMP_BAND_C) &&
-        (fabsf(humidity_rh   - setpoint_humidity_rh) < COMMS_STANDBY_RH_BAND)) {
-        return STATE_STANDBY;
-    }
-    return STATE_RUNNING;
 }
 
 /* Format a float with 2 decimal places into out[]. Avoids %f because
@@ -217,7 +182,7 @@ void Comms_SendTelemetry(float          temperature_c,
         "\"setpoint_temp\":%s,\"setpoint_humidity\":%s,"
         "\"state\":\"%s\",\"alarm\":%u}\n",
         temp_s, hum_s, sp_temp_s, sp_hum_s,
-        state_name(state), (unsigned)alarm_mask);
+        StateMachine_StateName(state), (unsigned)alarm_mask);
 
     if (n > 0 && n < (int)sizeof(buf)) {
         uart_send_blocking(buf, (uint16_t)n);
@@ -250,6 +215,10 @@ static void handle_command_line(const char *line)
     }
     if (strstr(line, "\"STOP\"") != NULL) {
         CabinetUI_ApplyCommand_SetRunning(0U);
+        return;
+    }
+    if (strstr(line, "\"ALARM_ACK\"") != NULL) {
+        StateMachine_PostEvent(EV_ALARM_ACK);
         return;
     }
     if (strstr(line, "\"SET\"") != NULL) {

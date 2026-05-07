@@ -12,11 +12,6 @@ typedef struct {
     uint32_t consecutive_fails; /* sensor read failures up to and including this frame */
 } sensor_frame_t;
 
-typedef struct {
-    float temp_target;
-    float rh_target;
-} setpoints_t;
-
 /* Matches userCmdQueue msgSize = 16 bytes */
 typedef enum {
     CMD_SET_TEMP   = 0x01,
@@ -53,9 +48,8 @@ typedef enum {
     EV_ALARM_ACK       = (1u << 6),
     EV_IDLE_TIMEOUT    = (1u << 7),
     EV_STABLE          = (1u << 8),
+    EV_FIRST_READING   = (1u << 9),
+    EV_UNSTABLE        = (1u << 10),
 } system_event_t;
-
-/* Global setpoints — declared in freertos.c, written by UI task */
-extern setpoints_t g_active_setpoints;
 
 #endif /* APP_TYPES_H */
